@@ -7,10 +7,12 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/op/go-logging"
+	"encoding/csv"
 )
 
 var log = logging.MustGetLogger("log")
@@ -21,6 +23,8 @@ type ClientConfig struct {
 	ServerAddress string
 	LoopAmount    int
 	LoopPeriod    time.Duration
+	BatchMaxAmount int
+	DataFilePath  string
 }
 
 // Client Entity that encapsulates how
@@ -59,40 +63,70 @@ func (c *Client) createClientSocket() error {
 	return nil
 }
 
-// StartClientLoop Send messages to the client until some time threshold is met
-func (c *Client) StartClientLoop() {
-	go c.handleGracefulShutdown()
+func (c *Client) ReadBetsFromFile() ([]string, error) {
+	file, err := os.Open(c.config.DataFilePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
 
-	message := fmt.Sprintf("%v|%v|%v|%v|%v|%v\n", 
-        c.config.ID,
-        os.Getenv("NOMBRE"),
-        os.Getenv("APELLIDO"),
-        os.Getenv("DOCUMENTO"),
-        os.Getenv("NACIMIENTO"),
-        os.Getenv("NUMERO"))
-	length_message := uint32(len(message))
+	var bets []string
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
 
-	// There is an autoincremental msgID to identify every message sent
-	// Messages if the message amount threshold has not been surpassed
-	for msgID := 1; msgID <= c.config.LoopAmount && c.isRunning; msgID++ {
-		// Create the connection the server in every loop iteration. Send an
+	for _, record := range records {
+		if len(record) < 5 {
+			continue
+		}
+		bets = append(bets, fmt.Sprintf("%v|%v|%v|%v|%v|%v\n",
+			c.config.ID,
+			record[0],
+			record[1],
+			record[2],
+			record[3],
+			record[4],
+		))
+	}
+	return bets, nil
+}
+
+func (c *Client) SendBatches(bets []string) error {
+	batchSize := c.config.BatchMaxAmount
+	totalBets := len(bets)
+	for i := 0; i < totalBets; i += batchSize {
+		end := i + batchSize
+
+		if end > totalBets {
+			end = totalBets
+		}
+
+		batch := bets[i:end]
+
+		batch_message := strings.Join(batch, "")
+
+		length_message := uint32(len(batch_message))
+
 		c.createClientSocket()
 
 		if c.conn == nil || !c.isRunning {
 			log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
-			return
+			return nil
 		}
 
 		err := binary.Write(c.conn, binary.BigEndian, length_message)
+
 		if err != nil {
 			log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			c.conn.Close()
-			return
+			return err
 		}
 
 		log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
 
-		fmt.Fprintf(c.conn, message)
+		fmt.Fprintf(c.conn, batch_message)
 
 		msg, err := bufio.NewReader(c.conn).ReadString('\n')
 		c.conn.Close()
@@ -102,7 +136,7 @@ func (c *Client) StartClientLoop() {
 				c.config.ID,
 				err,
 			)
-			return
+			return err
 		}
 
 		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
@@ -110,16 +144,35 @@ func (c *Client) StartClientLoop() {
 			msg,
 		)
 
-		if msg == message {
-			log.Infof("action: apuesta_enviada | result: success | dni: %s | numero: %s", os.Getenv("DOCUMENTO"), os.Getenv("NUMERO"))
+		if msg == "OK\n" {
+			log.Infof("action: batch_enviado | result: success")
 		} else {
-			log.Errorf("action: apuesta_enviada | result: fail | dni: %s | numero: %s", os.Getenv("DOCUMENTO"), os.Getenv("NUMERO"))
+			log.Errorf("action: batch_enviado | result: fail")
 		}
 
-		// Wait a time between sending one message and the next one
 		time.Sleep(c.config.LoopPeriod)
-
 	}
+	
+	return nil
+}
+
+func (c *Client) StartClientLoop() {
+	go c.handleGracefulShutdown()
+
+	bets, err := c.ReadBetsFromFile()
+	if err != nil {
+		log.Criticalf("action: read_bets | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+
+	err = c.SendBatches(bets)
+	
+	if err != nil {
+		log.Errorf("action: send_batches | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		c.conn.Close()
+		return
+	}
+	
 	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
 }
 

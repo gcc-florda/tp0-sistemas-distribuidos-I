@@ -108,6 +108,8 @@ func main() {
 		ID:            v.GetString("id"),
 		LoopAmount:    v.GetInt("loop.amount"),
 		LoopPeriod:    v.GetDuration("loop.period"),
+		BatchMaxAmount: v.GetInt("batch.maxAmount"),
+		DataFilePath:   fmt.Sprintf("/dataset/agency-%v.csv", v.GetString("id")),
 	}
 
 	client := common.NewClient(clientConfig)

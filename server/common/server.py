@@ -28,8 +28,7 @@ class Server:
         Server that accept a new connections and establishes a
         communication with a client. After client with communucation
         finishes, servers starts to accept new connections again
-        """
-
+        """        
         while self._running:
             client_sock = self.__accept_new_connection()
             if not self._running:
@@ -47,18 +46,34 @@ class Server:
             data_length = client_sock.recv(4)
             if not data_length:
                 return
-            
+
             message_length = struct.unpack('!I', data_length)[0]
-            
+
             full_message = self.__receive_full_message(client_sock, message_length)
-            
+
             if not full_message:
                 return
-            
-            message = self.__process_message(full_message)
 
-            self.__send_full_message(client_sock, "{}\n".format(message).encode('utf-8'))
-            
+            messages = full_message.decode('utf-8').split('\n')
+
+            success_count = 0
+            fail_count = 0
+
+            for message in messages:
+                if len(message) != 0:
+                    if self.__process_message(message):
+                        success_count += 1
+                    else:
+                        fail_count += 1
+
+            if fail_count == 0:
+                logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
+                client_sock.send("OK\n".encode('utf-8'))
+            else:
+                logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
+                logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
+                client_sock.send("FAIL\n".encode('utf-8'))
+
         except OSError as e:
             logging.error("action: receive_message | result: fail | error: {e}")
         finally:
@@ -72,14 +87,13 @@ class Server:
         Then connection created is printed and returned
         """
 
-        # Connection arrived
         logging.info('action: accept_connections | result: in_progress')
 
         try:
             c, addr = self._server_socket.accept()
         except:
             return
-        
+
         logging.info(f'action: accept_connections | result: success | ip: {addr[0]}')
         return c
 
@@ -92,32 +106,23 @@ class Server:
             data += packet
         return data
     
-    def __send_full_message(self, sock, message):
-        total_sent = 0
-        while total_sent < len(message):
-            sent = sock.send(message[total_sent:])
-            if sent == 0:
-                logging.error(f'action: send_message | result: fail')
-                break
-            total_sent += sent
-    
     def __process_message(self, data):
-        data_str = data.decode('utf-8')
-        data = data_str.split('|')
-        if len(data) == 6:
+        bet_data = data.split('|')
+        if len(bet_data) == 6:
             bet = Bet(
-                agency=data[0],
-                first_name=data[1],
-                last_name=data[2],
-                document=data[3],
-                birthdate=data[4],
-                number=data[5].rstrip('\n')
+                agency=bet_data[0],
+                first_name=bet_data[1],
+                last_name=bet_data[2],
+                document=bet_data[3],
+                birthdate=bet_data[4],
+                number=bet_data[5].rstrip('\n')
             )
             try:
                 store_bets([bet])
                 logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
-                return data_str
+                return True
             except Exception as e:
                 logging.error(f'action: store_bets | result: fail | error: {e}')
         else:
             logging.error("action: process_message | result: fail | error: invalid_message_format")
+        return False
