@@ -1,4 +1,16 @@
 import sys
+import os
+
+def load_env_file(filepath):
+    with open(filepath, 'r') as file:
+        for line in file:
+            if line.strip() and not line.startswith('#'):
+                key, value = line.strip().split('=', 1)
+                os.environ[key] = value
+
+env_file_path = '.env'
+
+load_env_file(env_file_path)
 
 def generate_docker_compose(file_name, num_clients):
     content = f"""name: tp0
@@ -25,6 +37,11 @@ services:
     environment:
       - CLI_ID={i}
       - CLI_LOG_LEVEL=DEBUG
+      - NOMBRE={os.environ[f'NOMBRE{i}']}
+      - APELLIDO={os.environ[f'APELLIDO{i}']}
+      - DOCUMENTO={os.environ[f'DOCUMENTO{i}']}
+      - NACIMIENTO={os.environ[f'NACIMIENTO{i}']}
+      - NUMERO={os.environ[f'NUMERO{i}']}
     volumes:
       - ./client/config.yaml:/config.yaml
     networks:

@@ -19,6 +19,11 @@ services:
     environment:
       - CLI_ID=1
       - CLI_LOG_LEVEL=DEBUG
+      - NOMBRE=Santiago Lionel
+      - APELLIDO=Lorca
+      - DOCUMENTO=30904465
+      - NACIMIENTO=1999-03-17
+      - NUMERO=7574
     volumes:
       - ./client/config.yaml:/config.yaml
     networks:
@@ -33,6 +38,68 @@ services:
     environment:
       - CLI_ID=2
       - CLI_LOG_LEVEL=DEBUG
+      - NOMBRE=Francisco
+      - APELLIDO=Lorda
+      - DOCUMENTO=43244380
+      - NACIMIENTO=2001-04-08
+      - NUMERO=9351
+    volumes:
+      - ./client/config.yaml:/config.yaml
+    networks:
+      - testing_net
+    depends_on:
+      - server
+
+  client3:
+    container_name: client3
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=3
+      - CLI_LOG_LEVEL=DEBUG
+      - NOMBRE=Chloe
+      - APELLIDO=Piru
+      - DOCUMENTO=43244380
+      - NACIMIENTO=2021-06-20
+      - NUMERO=9351
+    volumes:
+      - ./client/config.yaml:/config.yaml
+    networks:
+      - testing_net
+    depends_on:
+      - server
+
+  client4:
+    container_name: client4
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=4
+      - CLI_LOG_LEVEL=DEBUG
+      - NOMBRE=Mateo
+      - APELLIDO=Orquera
+      - DOCUMENTO=43244380
+      - NACIMIENTO=2009-07-31
+      - NUMERO=7777
+    volumes:
+      - ./client/config.yaml:/config.yaml
+    networks:
+      - testing_net
+    depends_on:
+      - server
+
+  client5:
+    container_name: client5
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=5
+      - CLI_LOG_LEVEL=DEBUG
+      - NOMBRE=Carolina
+      - APELLIDO=Piru
+      - DOCUMENTO=41758553
+      - NACIMIENTO=1999-01-19
+      - NUMERO=1848
     volumes:
       - ./client/config.yaml:/config.yaml
     networks:

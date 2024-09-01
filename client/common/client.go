@@ -2,6 +2,7 @@ package common
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -62,6 +63,15 @@ func (c *Client) createClientSocket() error {
 func (c *Client) StartClientLoop() {
 	go c.handleGracefulShutdown()
 
+	message := fmt.Sprintf("%v|%v|%v|%v|%v|%v\n", 
+        c.config.ID,
+        os.Getenv("NOMBRE"),
+        os.Getenv("APELLIDO"),
+        os.Getenv("DOCUMENTO"),
+        os.Getenv("NACIMIENTO"),
+        os.Getenv("NUMERO"))
+	length_message := uint32(len(message))
+
 	// There is an autoincremental msgID to identify every message sent
 	// Messages if the message amount threshold has not been surpassed
 	for msgID := 1; msgID <= c.config.LoopAmount && c.isRunning; msgID++ {
@@ -73,13 +83,17 @@ func (c *Client) StartClientLoop() {
 			return
 		}
 
-		// TODO: Modify the send to avoid short-write
-		fmt.Fprintf(
-			c.conn,
-			"[CLIENT %v] Message N°%v\n",
-			c.config.ID,
-			msgID,
-		)
+		err := binary.Write(c.conn, binary.BigEndian, length_message)
+		if err != nil {
+			log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			c.conn.Close()
+			return
+		}
+
+		log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
+
+		fmt.Fprintf(c.conn, message)
+
 		msg, err := bufio.NewReader(c.conn).ReadString('\n')
 		c.conn.Close()
 
@@ -95,6 +109,12 @@ func (c *Client) StartClientLoop() {
 			c.config.ID,
 			msg,
 		)
+
+		if msg == message {
+			log.Infof("action: apuesta_enviada | result: success | dni: %s | numero: %s", os.Getenv("DOCUMENTO"), os.Getenv("NUMERO"))
+		} else {
+			log.Errorf("action: apuesta_enviada | result: fail | dni: %s | numero: %s", os.Getenv("DOCUMENTO"), os.Getenv("NUMERO"))
+		}
 
 		// Wait a time between sending one message and the next one
 		time.Sleep(c.config.LoopPeriod)

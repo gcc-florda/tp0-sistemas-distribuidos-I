@@ -1,6 +1,8 @@
 import socket
 import logging
 import signal
+import struct
+from common.utils import Bet, store_bets
 
 
 class Server:
@@ -42,12 +44,21 @@ class Server:
         client socket will also be closed
         """
         try:
-            # TODO: Modify the receive to avoid short-reads
-            msg = client_sock.recv(1024).rstrip().decode('utf-8')
-            addr = client_sock.getpeername()
-            logging.info(f'action: receive_message | result: success | ip: {addr[0]} | msg: {msg}')
-            # TODO: Modify the send to avoid short-writes
-            client_sock.send("{}\n".format(msg).encode('utf-8'))
+            data_length = client_sock.recv(4)
+            if not data_length:
+                return
+            
+            message_length = struct.unpack('!I', data_length)[0]
+            
+            full_message = self.__receive_full_message(client_sock, message_length)
+            
+            if not full_message:
+                return
+            
+            message = self.__process_message(full_message)
+
+            self.__send_full_message(client_sock, "{}\n".format(message).encode('utf-8'))
+            
         except OSError as e:
             logging.error("action: receive_message | result: fail | error: {e}")
         finally:
@@ -71,3 +82,42 @@ class Server:
         
         logging.info(f'action: accept_connections | result: success | ip: {addr[0]}')
         return c
+
+    def __receive_full_message(self, client_sock, length):
+        data = b''
+        while len(data) < length:
+            packet = client_sock.recv(length - len(data))
+            if not packet:
+                return None
+            data += packet
+        return data
+    
+    def __send_full_message(self, sock, message):
+        total_sent = 0
+        while total_sent < len(message):
+            sent = sock.send(message[total_sent:])
+            if sent == 0:
+                logging.error(f'action: send_message | result: fail')
+                break
+            total_sent += sent
+    
+    def __process_message(self, data):
+        data_str = data.decode('utf-8')
+        data = data_str.split('|')
+        if len(data) == 6:
+            bet = Bet(
+                agency=data[0],
+                first_name=data[1],
+                last_name=data[2],
+                document=data[3],
+                birthdate=data[4],
+                number=data[5].rstrip('\n')
+            )
+            try:
+                store_bets([bet])
+                logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
+                return data_str
+            except Exception as e:
+                logging.error(f'action: store_bets | result: fail | error: {e}')
+        else:
+            logging.error("action: process_message | result: fail | error: invalid_message_format")
