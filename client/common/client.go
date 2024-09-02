@@ -125,108 +125,25 @@ func (c *Client) SendBatches(bets []string) error {
 	return nil
 }
 
-func (c *Client) sendBatch(batch []string) error {
-	batchMessage := strings.Join(batch, "")
-	lengthMessage := uint32(len(batchMessage))
-
-	c.createClientSocket()
-
-	if c.conn == nil || !c.isRunning {
-		log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
-		return errors.New("server closed")
-	}
-
-	err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
-
-	if err != nil {
-		log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		c.conn.Close()
-		return err
-	}
-
-	log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
-
-	fmt.Fprintf(c.conn, batchMessage)
-
-	msg, err := bufio.NewReader(c.conn).ReadString('\n')
-	c.conn.Close()
-
-	if err != nil {
-		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		return err
-	}
-
-	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, msg)
-
-	if msg == "OK\n" {
-		log.Infof("action: batch_enviado | result: success")
-	} else {
-		log.Errorf("action: batch_enviado | result: fail")
-	}
-
-	time.Sleep(c.config.LoopPeriod)
-	return nil
-}
-
 func (c *Client) FinishBets() error {
 	finishMessage := fmt.Sprintf("%v|FINISHED\n", c.config.ID)
-	lengthMessage := uint32(len(finishMessage))
 
-	c.createClientSocket()
-
-	if c.conn == nil || !c.isRunning {
-		log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
-		return errors.New("server closed")
-	}
-
-	err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
+	_, err := c.sendMessage(finishMessage)
 	if err != nil {
-		log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		c.conn.Close()
 		return err
 	}
-
-	log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
-
-	fmt.Fprintf(c.conn, finishMessage)
-
-	// falta cerrar la conexion?
 
 	return nil
 }
 
 func (c *Client) RequestWinners() error {
 	winnerMessage := fmt.Sprintf("%v|REQUEST_WINNERS\n", c.config.ID)
-	lengthMessage := uint32(len(winnerMessage))
 
 	for {
-		c.createClientSocket()
-
-		if c.conn == nil || !c.isRunning {
-			log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
-			return errors.New("server closed")
-		}
-
-		err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
+		msg, err := c.sendMessage(winnerMessage)
 		if err != nil {
-			log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			c.conn.Close()
 			return err
 		}
-
-		log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
-
-		fmt.Fprintf(c.conn, winnerMessage)
-
-		msg, err := bufio.NewReader(c.conn).ReadString('\n')
-		c.conn.Close()
-
-		if err != nil {
-			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return err
-		}
-
-		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, msg)
 
 		if strings.HasPrefix(msg, "WINNERS:") {
 			countStr := strings.TrimPrefix(msg, "WINNERS:")
@@ -249,31 +166,28 @@ func (c *Client) StartClientLoop() {
 
 	bets, err := c.ReadBetsFromFile()
 	if err != nil {
-		log.Criticalf("action: read_bets | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		c.closeConnection("read_bets", err)
 		return
 	}
 
 	err = c.SendBatches(bets)
-	
 	if err != nil {
-		log.Errorf("action: send_batches | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		if err.Error() != "server closed" {
-			c.conn.Close()
-		}
+		c.closeConnection("send_batches", err)
 		return
 	}
 
 	err = c.FinishBets()
 	if err != nil {
-		log.Errorf("action: finish_bets | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		c.closeConnection("finish_bets", err)
 		return
 	}
 
 	err = c.RequestWinners()
 	if err != nil {
-		log.Errorf("action: request_winners | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		c.closeConnection("request_winners", err)
+		return
 	}
-	
+
 	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
 }
 
@@ -285,4 +199,63 @@ func (c *Client) handleGracefulShutdown() {
 		c.conn.Close()
 	}
 	log.Infof("action: client_graceful_shutdown | result: success | client_id: %v", c.config.ID)
+}
+
+func (c *Client) closeConnection(action string, err error) {
+	log.Errorf("action: %s | result: fail | client_id: %v | error: %v", action, c.config.ID, err)
+	if err.Error() != "server closed" {
+		c.conn.Close()
+	}
+}
+
+func (c *Client) sendBatch(batch []string) error {
+	batchMessage := strings.Join(batch, "")
+
+	msg, err := c.sendMessage(batchMessage)
+	if err != nil {
+		return err
+	}
+
+	if msg == "OK\n" {
+		log.Infof("action: batch_enviado | result: success")
+	} else {
+		log.Errorf("action: batch_enviado | result: fail")
+	}
+
+	time.Sleep(c.config.LoopPeriod)
+	return nil
+}
+
+func (c *Client) sendMessage(message string) (string, error) {
+	lengthMessage := uint32(len(message))
+
+	c.createClientSocket()
+
+	if c.conn == nil || !c.isRunning {
+		log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
+		return "", errors.New("server closed")
+	}
+
+	err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
+	if err != nil {
+		log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		c.conn.Close()
+		return "", err
+	}
+
+	log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
+
+	fmt.Fprintf(c.conn, message)
+
+	msg, err := bufio.NewReader(c.conn).ReadString('\n')
+	c.conn.Close()
+
+	if err != nil {
+		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return "", err
+	}
+
+	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, msg)
+
+	return msg, nil
 }

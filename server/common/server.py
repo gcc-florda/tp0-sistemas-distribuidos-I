@@ -67,6 +67,8 @@ class Server:
                     if len(self.finished_agencies) == AGENCIES:
                         logging.info("action: sorteo | result: success")
                         self.bets = list(load_bets())
+                    
+                    client_sock.send(f"FINISHED RECEIVED\n".encode('utf-8'))
 
                 elif message[1] == 'REQUEST_WINNERS':
                     if len(self.finished_agencies) < AGENCIES:
