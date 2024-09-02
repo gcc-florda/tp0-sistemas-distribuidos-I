@@ -108,21 +108,25 @@ class Server:
     
     def __process_message(self, data):
         bet_data = data.split('|')
-        if len(bet_data) == 6:
-            bet = Bet(
-                agency=bet_data[0],
-                first_name=bet_data[1],
-                last_name=bet_data[2],
-                document=bet_data[3],
-                birthdate=bet_data[4],
-                number=bet_data[5].rstrip('\n')
-            )
-            try:
-                store_bets([bet])
-                logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
-                return True
-            except Exception as e:
-                logging.error(f'action: store_bets | result: fail | error: {e}')
-        else:
+        if len(bet_data) != 6:
             logging.error("action: process_message | result: fail | error: invalid_message_format")
-        return False
+            return False
+        try:
+            bet = Bet(
+            agency=bet_data[0],
+            first_name=bet_data[1],
+            last_name=bet_data[2],
+            document=bet_data[3],
+            birthdate=bet_data[4],
+            number=bet_data[5].rstrip('\n')
+        )
+        except Exception as e:
+            logging.error(f'action: process_message | result: fail | error: {e}')
+            return False
+        try:
+            store_bets([bet])
+            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
+            return True
+        except Exception as e:
+            logging.error(f'action: store_bets | result: fail | error: {e}')
+            return False

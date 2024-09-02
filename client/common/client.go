@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"errors"
 
 	"github.com/op/go-logging"
 	"encoding/csv"
@@ -94,65 +95,76 @@ func (c *Client) ReadBetsFromFile() ([]string, error) {
 }
 
 func (c *Client) SendBatches(bets []string) error {
+	const maxBatchSize = 8 * 1024
 	batchSize := c.config.BatchMaxAmount
-	totalBets := len(bets)
-	for i := 0; i < totalBets; i += batchSize {
-		end := i + batchSize
+	var currentBatch []string
+	var currentBatchSize int
 
-		if end > totalBets {
-			end = totalBets
+	for _, bet := range bets {
+		betSize := len(bet)
+
+		if currentBatchSize+betSize > maxBatchSize || len(currentBatch) >= batchSize {
+			if err := c.sendBatch(currentBatch); err != nil {
+				return err
+			}
+			
+			currentBatch = []string{}
+			currentBatchSize = 0
 		}
 
-		batch := bets[i:end]
-
-		batch_message := strings.Join(batch, "")
-
-		length_message := uint32(len(batch_message))
-
-		c.createClientSocket()
-
-		if c.conn == nil || !c.isRunning {
-			log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
-			return nil
-		}
-
-		err := binary.Write(c.conn, binary.BigEndian, length_message)
-
-		if err != nil {
-			log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			c.conn.Close()
-			return err
-		}
-
-		log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
-
-		fmt.Fprintf(c.conn, batch_message)
-
-		msg, err := bufio.NewReader(c.conn).ReadString('\n')
-		c.conn.Close()
-
-		if err != nil {
-			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
-				c.config.ID,
-				err,
-			)
-			return err
-		}
-
-		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
-			c.config.ID,
-			msg,
-		)
-
-		if msg == "OK\n" {
-			log.Infof("action: batch_enviado | result: success")
-		} else {
-			log.Errorf("action: batch_enviado | result: fail")
-		}
-
-		time.Sleep(c.config.LoopPeriod)
+		currentBatch = append(currentBatch, bet)
+		currentBatchSize += betSize
 	}
-	
+
+	if len(currentBatch) > 0 {
+		if err := c.sendBatch(currentBatch); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) sendBatch(batch []string) error {
+	batchMessage := strings.Join(batch, "")
+	lengthMessage := uint32(len(batchMessage))
+
+	c.createClientSocket()
+
+	if c.conn == nil || !c.isRunning {
+		log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
+		return errors.New("server closed")
+	}
+
+	err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
+
+	if err != nil {
+		log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		c.conn.Close()
+		return err
+	}
+
+	log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
+
+	fmt.Fprintf(c.conn, batchMessage)
+
+	msg, err := bufio.NewReader(c.conn).ReadString('\n')
+	c.conn.Close()
+
+	if err != nil {
+		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return err
+	}
+
+	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, msg)
+
+	if msg == "OK\n" {
+		log.Infof("action: batch_enviado | result: success")
+	} else {
+		log.Errorf("action: batch_enviado | result: fail")
+	}
+
+	time.Sleep(c.config.LoopPeriod)
 	return nil
 }
 
@@ -169,7 +181,9 @@ func (c *Client) StartClientLoop() {
 	
 	if err != nil {
 		log.Errorf("action: send_batches | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		c.conn.Close()
+		if err.Error() != "server closed" {
+			c.conn.Close()
+		}
 		return
 	}
 	
