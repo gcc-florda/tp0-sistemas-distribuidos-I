@@ -168,6 +168,82 @@ func (c *Client) sendBatch(batch []string) error {
 	return nil
 }
 
+func (c *Client) FinishBets() error {
+	finishMessage := fmt.Sprintf("%v|FINISHED\n", c.config.ID)
+	lengthMessage := uint32(len(finishMessage))
+
+	c.createClientSocket()
+
+	if c.conn == nil || !c.isRunning {
+		log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
+		return errors.New("server closed")
+	}
+
+	err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
+	if err != nil {
+		log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		c.conn.Close()
+		return err
+	}
+
+	log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
+
+	fmt.Fprintf(c.conn, finishMessage)
+
+	// falta cerrar la conexion?
+
+	return nil
+}
+
+func (c *Client) RequestWinners() error {
+	winnerMessage := fmt.Sprintf("%v|REQUEST_WINNERS\n", c.config.ID)
+	lengthMessage := uint32(len(winnerMessage))
+
+	for {
+		c.createClientSocket()
+
+		if c.conn == nil || !c.isRunning {
+			log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
+			return errors.New("server closed")
+		}
+
+		err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
+		if err != nil {
+			log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			c.conn.Close()
+			return err
+		}
+
+		log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
+
+		fmt.Fprintf(c.conn, winnerMessage)
+
+		msg, err := bufio.NewReader(c.conn).ReadString('\n')
+		c.conn.Close()
+
+		if err != nil {
+			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return err
+		}
+
+		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, msg)
+
+		if strings.HasPrefix(msg, "WINNERS:") {
+			countStr := strings.TrimPrefix(msg, "WINNERS:")
+			log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", countStr)
+			break
+		} else if strings.TrimSpace(msg) == "NOT_READY" {
+			log.Infof("action: consulta_ganadores | result: not_ready | client_id: %v", c.config.ID)
+			time.Sleep(c.config.LoopPeriod)
+		} else {
+			log.Errorf("action: consulta_ganadores | result: fail | msg: %v", msg)
+			break
+		}
+	}
+
+	return nil
+}
+
 func (c *Client) StartClientLoop() {
 	go c.handleGracefulShutdown()
 
@@ -185,6 +261,17 @@ func (c *Client) StartClientLoop() {
 			c.conn.Close()
 		}
 		return
+	}
+
+	err = c.FinishBets()
+	if err != nil {
+		log.Errorf("action: finish_bets | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+
+	err = c.RequestWinners()
+	if err != nil {
+		log.Errorf("action: request_winners | result: fail | client_id: %v | error: %v", c.config.ID, err)
 	}
 	
 	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)

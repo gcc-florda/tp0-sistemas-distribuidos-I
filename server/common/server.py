@@ -2,8 +2,9 @@ import socket
 import logging
 import signal
 import struct
-from common.utils import Bet, store_bets
+from common.utils import Bet, store_bets, load_bets, has_won
 
+AGENCIES = 5
 
 class Server:
     def __init__(self, port, listen_backlog):
@@ -12,6 +13,8 @@ class Server:
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
         self._running = True
+        self.finished_agencies = set()
+        self.bets = list[Bet]
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
@@ -55,24 +58,41 @@ class Server:
                 return
 
             messages = full_message.decode('utf-8').split('\n')
+            
+            if len(messages) == 2:
+                message = messages[0].split('|')
+                if message[1] == 'FINISHED':
+                    self.finished_agencies.add(message[0])
 
-            success_count = 0
-            fail_count = 0
+                    if len(self.finished_agencies) == AGENCIES:
+                        logging.info("action: sorteo | result: success")
+                        self.bets = list(load_bets())
 
-            for message in messages:
-                if len(message) != 0:
-                    if self.__process_message(message):
-                        success_count += 1
+                elif message[1] == 'REQUEST_WINNERS':
+                    if len(self.finished_agencies) < AGENCIES:
+                        client_sock.send("NOT_READY\n".encode('utf-8'))
                     else:
-                        fail_count += 1
+                        winners = self.__get_acency_winners(message[0])
+                        client_sock.send(f"WINNERS:{winners}\n".encode('utf-8'))
 
-            if fail_count == 0:
-                logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
-                client_sock.send("OK\n".encode('utf-8'))
             else:
-                logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
-                logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
-                client_sock.send("FAIL\n".encode('utf-8'))
+                success_count = 0
+                fail_count = 0
+
+                for message in messages:
+                    if len(message) != 0:
+                        if self.__process_message(message):
+                            success_count += 1
+                        else:
+                            fail_count += 1
+
+                if fail_count == 0:
+                    logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
+                    client_sock.send("OK\n".encode('utf-8'))
+                else:
+                    logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
+                    logging.warning(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
+                    client_sock.send("FAIL\n".encode('utf-8'))
 
         except OSError as e:
             logging.error("action: receive_message | result: fail | error: {e}")
@@ -130,3 +150,10 @@ class Server:
         except Exception as e:
             logging.error(f'action: store_bets | result: fail | error: {e}')
             return False
+    
+    def __get_acency_winners(self, agency_id):
+        winners = 0
+        for bet in self.bets:
+            if bet.agency == int(agency_id) and has_won(bet):
+                winners += 1
+        return winners
