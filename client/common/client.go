@@ -146,8 +146,16 @@ func (c *Client) RequestWinners() error {
 		}
 
 		if strings.HasPrefix(msg, "WINNERS:") {
-			countStr := strings.TrimPrefix(msg, "WINNERS:")
-			log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", countStr)
+			winners := strings.TrimPrefix(msg, "WINNERS:")
+			winners = strings.TrimSpace(winners)
+			var winnerCount int
+			if winners == "" {
+				winnerCount = 0
+			} else {
+				winnersIds := strings.Split(winners, "|")
+				winnerCount = len(winnersIds)
+			}
+			log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", winnerCount)
 			break
 		} else if strings.TrimSpace(msg) == "NOT_READY" {
 			log.Infof("action: consulta_ganadores | result: not_ready | client_id: %v", c.config.ID)

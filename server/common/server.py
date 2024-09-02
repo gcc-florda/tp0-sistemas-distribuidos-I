@@ -74,8 +74,9 @@ class Server:
                     if len(self.finished_agencies) < AGENCIES:
                         client_sock.send("NOT_READY\n".encode('utf-8'))
                     else:
-                        winners = self.__get_acency_winners(message[0])
-                        client_sock.send(f"WINNERS:{winners}\n".encode('utf-8'))
+                        winners_list = self.__get_acency_winners(message[0])
+                        winners = '|'.join(winners_list)
+                        self.__send_full_message(client_sock, f"WINNERS:{winners}\n".encode('utf-8'))
 
             else:
                 success_count = 0
@@ -153,9 +154,18 @@ class Server:
             logging.error(f'action: store_bets | result: fail | error: {e}')
             return False
     
+    def __send_full_message(self, sock, message):
+        total_sent = 0
+        while total_sent < len(message):
+            sent = sock.send(message[total_sent:])
+            if sent == 0:
+                logging.error(f'action: send_message | result: fail')
+                break
+            total_sent += sent
+    
     def __get_acency_winners(self, agency_id):
-        winners = 0
+        winners = []
         for bet in self.bets:
             if bet.agency == int(agency_id) and has_won(bet):
-                winners += 1
+                winners.append(bet.document)
         return winners
