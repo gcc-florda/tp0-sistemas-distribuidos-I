@@ -70,6 +70,7 @@ func (c *Client) StartClientLoop() {
 
 		if c.conn == nil || !c.isRunning {
 			log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
+			c.conn.Close()
 			return
 		}
 
