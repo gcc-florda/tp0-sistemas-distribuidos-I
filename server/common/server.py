@@ -2,6 +2,7 @@ import socket
 import logging
 import signal
 import struct
+import multiprocessing
 from common.utils import Bet, store_bets, load_bets, has_won
 
 AGENCIES = 5
@@ -13,8 +14,11 @@ class Server:
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
         self._running = True
-        self.finished_agencies = set()
-        self.bets = list[Bet]
+        
+        manager = multiprocessing.Manager()
+        self.finished_agencies = manager.list()
+        self.bets = manager.list()
+        self.file_lock = manager.Lock()
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
@@ -36,7 +40,9 @@ class Server:
             client_sock = self.__accept_new_connection()
             if not self._running:
                 break
-            self.__handle_client_connection(client_sock)
+            process = multiprocessing.Process(target=self.__handle_client_connection, args=(client_sock,))
+            process.start()
+            process.join()
 
     def __handle_client_connection(self, client_sock):
         """
@@ -62,11 +68,11 @@ class Server:
             if len(messages) == 2:
                 message = messages[0].split('|')
                 if message[1] == 'FINISHED':
-                    self.finished_agencies.add(message[0])
+                    self.finished_agencies.append(message[0])
 
                     if len(self.finished_agencies) == AGENCIES:
                         logging.info("action: sorteo | result: success")
-                        self.bets = list(load_bets())
+                        self.bets[:] = list(load_bets())
                     
                     client_sock.send(f"FINISHED RECEIVED\n".encode('utf-8'))
 
@@ -135,18 +141,19 @@ class Server:
             return False
         try:
             bet = Bet(
-            agency=bet_data[0],
-            first_name=bet_data[1],
-            last_name=bet_data[2],
-            document=bet_data[3],
-            birthdate=bet_data[4],
-            number=bet_data[5].rstrip('\n')
-        )
+                agency=bet_data[0],
+                first_name=bet_data[1],
+                last_name=bet_data[2],
+                document=bet_data[3],
+                birthdate=bet_data[4],
+                number=bet_data[5].rstrip('\n')
+            )
         except Exception as e:
             logging.error(f'action: process_message | result: fail | error: {e}')
             return False
         try:
-            store_bets([bet])
+            with self.file_lock:
+                store_bets([bet])
             logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
             return True
         except Exception as e:
