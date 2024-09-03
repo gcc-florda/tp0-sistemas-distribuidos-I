@@ -24,9 +24,9 @@ type ClientConfig struct {
 
 // Client Entity that encapsulates how
 type Client struct {
-	config ClientConfig
-	conn   net.Conn
-	shutdown chan os.Signal
+	config    ClientConfig
+	conn      net.Conn
+	shutdown  chan os.Signal
 	isRunning bool
 }
 
@@ -34,7 +34,7 @@ type Client struct {
 // as a parameter
 func NewClient(config ClientConfig) *Client {
 	client := &Client{
-		config: config,
+		config:    config,
 		shutdown:  make(chan os.Signal, 1),
 		isRunning: true,
 	}
@@ -70,7 +70,6 @@ func (c *Client) StartClientLoop() {
 
 		if c.conn == nil || !c.isRunning {
 			log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
-			c.conn.Close()
 			return
 		}
 
