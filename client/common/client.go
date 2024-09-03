@@ -1,15 +1,16 @@
 package common
 
 import (
-	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
-	"errors"
 
 	"github.com/op/go-logging"
 )
@@ -26,9 +27,9 @@ type ClientConfig struct {
 
 // Client Entity that encapsulates how
 type Client struct {
-	config ClientConfig
-	conn   net.Conn
-	shutdown chan os.Signal
+	config    ClientConfig
+	conn      net.Conn
+	shutdown  chan os.Signal
 	isRunning bool
 }
 
@@ -36,7 +37,7 @@ type Client struct {
 // as a parameter
 func NewClient(config ClientConfig) *Client {
 	client := &Client{
-		config: config,
+		config:    config,
 		shutdown:  make(chan os.Signal, 1),
 		isRunning: true,
 	}
@@ -64,13 +65,13 @@ func (c *Client) createClientSocket() error {
 func (c *Client) StartClientLoop() {
 	go c.handleGracefulShutdown()
 
-	message := fmt.Sprintf("%v|%v|%v|%v|%v|%v\n", 
-        c.config.ID,
-        os.Getenv("NOMBRE"),
-        os.Getenv("APELLIDO"),
-        os.Getenv("DOCUMENTO"),
-        os.Getenv("NACIMIENTO"),
-        os.Getenv("NUMERO"))
+	message := fmt.Sprintf("%v|%v|%v|%v|%v|%v\n",
+		c.config.ID,
+		os.Getenv("NOMBRE"),
+		os.Getenv("APELLIDO"),
+		os.Getenv("DOCUMENTO"),
+		os.Getenv("NACIMIENTO"),
+		os.Getenv("NUMERO"))
 
 	msg, err := c.sendMessage(message)
 
@@ -78,6 +79,9 @@ func (c *Client) StartClientLoop() {
 		c.closeConnection("receive_message", err)
 		return
 	}
+
+	msg = strings.TrimSpace(msg)
+	message = strings.TrimSpace(message)
 
 	if msg == message {
 		log.Infof("action: apuesta_enviada | result: success | dni: %s | numero: %s", os.Getenv("DOCUMENTO"), os.Getenv("NUMERO"))
@@ -126,15 +130,28 @@ func (c *Client) sendMessage(message string) (string, error) {
 
 	fmt.Fprintf(c.conn, message)
 
-	msg, err := bufio.NewReader(c.conn).ReadString('\n')
+	var length uint32
+
+	err = binary.Read(c.conn, binary.BigEndian, &length)
+	if err != nil {
+		log.Infof("action: receive_message_length | result: fail | error: %v", err)
+		return "", err
+	}
+
+	log.Infof("action: receive_message_length | result: success | message_length: %d", length)
+
+	readMessage := make([]byte, length)
+	_, err = io.ReadFull(c.conn, readMessage)
 	c.conn.Close()
+
+	fullMessage := string(readMessage)
 
 	if err != nil {
 		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
 	}
 
-	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, msg)
+	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, fullMessage)
 
-	return msg, nil
+	return fullMessage, nil
 }

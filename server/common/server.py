@@ -94,7 +94,15 @@ class Server:
     
     def __send_full_message(self, sock, message):
         total_sent = 0
-        while total_sent < len(message):
+        length_message = len(message)
+        
+        try:
+            sock.sendall(struct.pack('!I', length_message))
+        except socket.error as e:
+            logging.error(f"action: send_message_length | result: fail")
+            return
+
+        while total_sent < length_message:
             sent = sock.send(message[total_sent:])
             if sent == 0:
                 logging.error(f'action: send_message | result: fail')
