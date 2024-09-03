@@ -104,7 +104,7 @@ func (c *Client) handleGracefulShutdown() {
 
 func (c *Client) closeConnection(action string, err error) {
 	log.Errorf("action: %s | result: fail | client_id: %v | error: %v", action, c.config.ID, err)
-	if err.Error() != "server closed" {
+	if err.Error() != "client already shutdown" {
 		c.conn.Close()
 	}
 }
@@ -115,14 +115,13 @@ func (c *Client) sendMessage(message string) (string, error) {
 	c.createClientSocket()
 
 	if c.conn == nil || !c.isRunning {
-		log.Criticalf("action: connect | result: fail | client_id: %v | error: server closed", c.config.ID)
-		return "", errors.New("server closed")
+		log.Criticalf("action: connect | result: fail | client_id: %v | error: client already shutdown", c.config.ID)
+		return "", errors.New("client already shutdown")
 	}
 
 	err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
 	if err != nil {
 		log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		c.conn.Close()
 		return "", err
 	}
 
@@ -142,14 +141,15 @@ func (c *Client) sendMessage(message string) (string, error) {
 
 	readMessage := make([]byte, length)
 	_, err = io.ReadFull(c.conn, readMessage)
-	c.conn.Close()
-
-	fullMessage := string(readMessage)
 
 	if err != nil {
 		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
 	}
+
+	fullMessage := string(readMessage)
+
+	c.conn.Close()
 
 	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, fullMessage)
 
