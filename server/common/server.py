@@ -74,11 +74,11 @@ class Server:
                         logging.info("action: sorteo | result: success")
                         self.bets[:] = list(load_bets())
                     
-                    client_sock.send(f"FINISHED RECEIVED\n".encode('utf-8'))
+                    self.__send_full_message(client_sock, "FINISHED RECEIVE\n".encode('utf-8'))
 
                 elif message[1] == 'REQUEST_WINNERS':
                     if len(self.finished_agencies) < AGENCIES:
-                        client_sock.send("NOT_READY\n".encode('utf-8'))
+                        self.__send_full_message(client_sock, "NOT_READY\n".encode('utf-8'))
                     else:
                         winners_list = self.__get_acency_winners(message[0])
                         winners = '|'.join(winners_list)
@@ -97,11 +97,11 @@ class Server:
 
                 if fail_count == 0:
                     logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
-                    client_sock.send("OK\n".encode('utf-8'))
+                    self.__send_full_message(client_sock, "OK\n".encode('utf-8'))
                 else:
                     logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
-                    logging.warning(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
-                    client_sock.send("FAIL\n".encode('utf-8'))
+                    logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
+                    self.__send_full_message(client_sock, "FAIL\n".encode('utf-8'))
 
         except OSError as e:
             logging.error("action: receive_message | result: fail | error: {e}")
@@ -135,6 +135,23 @@ class Server:
             data += packet
         return data
     
+    def __send_full_message(self, sock, message):
+        total_sent = 0
+        length_message = len(message)
+        
+        try:
+            sock.sendall(struct.pack('!I', length_message))
+        except socket.error as e:
+            logging.error(f"action: send_message_length | result: fail")
+            return
+
+        while total_sent < length_message:
+            sent = sock.send(message[total_sent:])
+            if sent == 0:
+                logging.error(f'action: send_message | result: fail')
+                break
+            total_sent += sent
+    
     def __process_message(self, data):
         bet_data = data.split('|')
         if len(bet_data) != 6:
@@ -160,15 +177,6 @@ class Server:
         except Exception as e:
             logging.error(f'action: store_bets | result: fail | error: {e}')
             return False
-    
-    def __send_full_message(self, sock, message):
-        total_sent = 0
-        while total_sent < len(message):
-            sent = sock.send(message[total_sent:])
-            if sent == 0:
-                logging.error(f'action: send_message | result: fail')
-                break
-            total_sent += sent
     
     def __get_acency_winners(self, agency_id):
         winners = []
