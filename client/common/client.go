@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -227,7 +228,7 @@ func (c *Client) sendBatch(batch []string) error {
 
 	msg = strings.TrimSpace(msg)
 
-	if msg == "OK" {
+	if msg == "BATCH_RECEIVED" {
 		log.Infof("action: batch_enviado | result: success")
 	} else {
 		log.Errorf("action: batch_enviado | result: fail")
@@ -247,41 +248,49 @@ func (c *Client) sendMessage(message string) (string, error) {
 		return "", errors.New("client already shutdown")
 	}
 
-	err := binary.Write(c.conn, binary.BigEndian, lengthMessage)
+	buffer := new(bytes.Buffer)
+
+	err := binary.Write(buffer, binary.BigEndian, lengthMessage)
 	if err != nil {
-		log.Errorf("action: send_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		c.conn.Close()
+		log.Errorf("action: write_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
 	}
 
-	log.Infof("action: send_message_length | result: success | client_id: %v", c.config.ID)
-
-	fmt.Fprintf(c.conn, message)
-
-	var length uint32
-
-	err = binary.Read(c.conn, binary.BigEndian, &length)
+	err = binary.Write(buffer, binary.BigEndian, []byte(message))
 	if err != nil {
-		log.Infof("action: receive_message_length | result: fail | error: %v", err)
+		log.Errorf("action: write_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
 	}
 
-	log.Infof("action: receive_message_length | result: success | message_length: %d", length)
+	_, err = c.conn.Write(buffer.Bytes())
+	if err != nil {
+		log.Errorf("action: send_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return "", err
+	}
 
-	readMessage := make([]byte, length)
-	_, err = io.ReadFull(c.conn, readMessage)
+	log.Infof("action: send_message | result: success | client_id: %v", c.config.ID)
 
+	lengthBuffer := make([]byte, 4)
+	_, err = io.ReadFull(c.conn, lengthBuffer)
+	if err != nil {
+		log.Errorf("action: receive_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return "", err
+	}
+
+	messageLength := binary.BigEndian.Uint32(lengthBuffer)
+
+	messageBuffer := make([]byte, messageLength)
+	_, err = io.ReadFull(c.conn, messageBuffer)
 	if err != nil {
 		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
 	}
 
-	fullMessage := string(readMessage)
+	fullMessage := string(messageBuffer)
 
 	c.conn.Close()
 
 	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, fullMessage)
 
 	return fullMessage, nil
-
 }
