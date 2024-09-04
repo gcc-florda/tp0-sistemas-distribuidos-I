@@ -44,13 +44,7 @@ class Server:
         client socket will also be closed
         """
         try:
-            data_length = client_sock.recv(4)
-            if not data_length:
-                return
-            
-            message_length = struct.unpack('!I', data_length)[0]
-            
-            full_message = self.__receive_full_message(client_sock, message_length)
+            full_message = self.__receive_full_message(client_sock)
             
             if not full_message:
                 return
@@ -83,35 +77,29 @@ class Server:
         logging.info(f'action: accept_connections | result: success | ip: {addr[0]}')
         return c
 
-    def __receive_full_message(self, client_sock, length):
+    def __receive_full_message(self, client_sock):
+        data_length = client_sock.recv(4)
+        if not data_length:
+            return None
+        message_length = struct.unpack('!I', data_length)[0]
         data = b''
-        while len(data) < length:
-            packet = client_sock.recv(length - len(data))
+        while len(data) < message_length:
+            packet = client_sock.recv(message_length - len(data))
             if not packet:
                 return None
             data += packet
-        return data
+        return data.decode('utf-8')
     
     def __send_full_message(self, sock, message):
-        total_sent = 0
-        length_message = len(message)
-        
         try:
-            sock.sendall(struct.pack('!I', length_message))
+            length_message = len(message)
+            buffer = struct.pack('!I', length_message) + message
+            sock.sendall(buffer)
         except socket.error as e:
-            logging.error(f"action: send_message_length | result: fail")
-            return
-
-        while total_sent < length_message:
-            sent = sock.send(message[total_sent:])
-            if sent == 0:
-                logging.error(f'action: send_message | result: fail')
-                break
-            total_sent += sent
+            logging.error(f"action: send_message | result: fail | error: {e}")
     
     def __process_message(self, data):
-        data_str = data.decode('utf-8')
-        data = data_str.split('|')
+        data = data.split('|')
         if len(data) == 6:
             bet = Bet(
                 agency=data[0],
@@ -124,7 +112,7 @@ class Server:
             try:
                 store_bets([bet])
                 logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
-                return data_str
+                return data
             except Exception as e:
                 logging.error(f'action: store_bets | result: fail | error: {e}')
         else:
