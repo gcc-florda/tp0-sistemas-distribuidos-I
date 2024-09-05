@@ -214,6 +214,7 @@ func (c *Client) handleGracefulShutdown() {
 func (c *Client) closeConnection(action string, err error) {
 	log.Errorf("action: %s | result: fail | client_id: %v | error: %v", action, c.config.ID, err)
 	if err.Error() != "client already shutdown" {
+		log.Infof("action: client_shutdown | result: success | client_id: %v", c.config.ID)
 		c.conn.Close()
 	}
 }
