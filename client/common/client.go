@@ -141,37 +141,37 @@ func (c *Client) FinishBets() error {
 func (c *Client) RequestWinners() error {
 	winnerMessage := fmt.Sprintf("%v|REQUEST_WINNERS\n", c.config.ID)
 
-	for {
-		msg, err := c.sendMessage(winnerMessage)
-		if err != nil {
-			return err
-		}
+	msg, err := c.sendMessage(winnerMessage)
+	if err != nil {
+		return err
+	}
 
-		if strings.HasPrefix(msg, "WINNERS:") {
-			winners := strings.TrimPrefix(msg, "WINNERS:")
-			winners = strings.TrimSpace(winners)
-			var winnerCount int
-			if winners == "" {
-				winnerCount = 0
-			} else {
-				winnersIds := strings.Split(winners, "|")
-				winnerCount = len(winnersIds)
-			}
-			log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", winnerCount)
-			break
-		} else if strings.TrimSpace(msg) == "NOT_READY" {
-			log.Infof("action: consulta_ganadores | result: not_ready | client_id: %v", c.config.ID)
-			time.Sleep(c.config.LoopPeriod)
+	if strings.HasPrefix(msg, "WINNERS:") {
+		winners := strings.TrimPrefix(msg, "WINNERS:")
+		winners = strings.TrimSpace(winners)
+		var winnerCount int
+		if winners == "" {
+			winnerCount = 0
 		} else {
-			log.Errorf("action: consulta_ganadores | result: fail | msg: %v", msg)
-			break
+			winnersIds := strings.Split(winners, "|")
+			winnerCount = len(winnersIds)
 		}
+		log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", winnerCount)
+	} else if strings.TrimSpace(msg) == "NOT_READY" {
+		log.Infof("action: consulta_ganadores | result: not_ready | client_id: %v", c.config.ID)
+	} else {
+		log.Errorf("action: consulta_ganadores | result: fail | msg: %v", msg)
 	}
 
 	return nil
 }
 
 func (c *Client) StartClientLoop() {
+	if err := c.createClientSocket(); err != nil {
+		c.closeConnection("create_client_socket", err)
+		return
+	}
+
 	go c.handleGracefulShutdown()
 
 	bets, err := c.ReadBetsFromFile()
@@ -239,10 +239,6 @@ func (c *Client) sendBatch(batch []string) error {
 }
 
 func (c *Client) sendMessage(message string) (string, error) {
-	lengthMessage := uint32(len(message))
-
-	c.createClientSocket()
-
 	if c.conn == nil || !c.isRunning {
 		log.Criticalf("action: connect | result: fail | client_id: %v | error: client already shutdown", c.config.ID)
 		return "", errors.New("client already shutdown")
@@ -250,7 +246,7 @@ func (c *Client) sendMessage(message string) (string, error) {
 
 	buffer := new(bytes.Buffer)
 
-	err := binary.Write(buffer, binary.BigEndian, lengthMessage)
+	err := binary.Write(buffer, binary.BigEndian, uint32(len(message)))
 	if err != nil {
 		log.Errorf("action: write_message_length | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
@@ -287,8 +283,6 @@ func (c *Client) sendMessage(message string) (string, error) {
 	}
 
 	fullMessage := string(messageBuffer)
-
-	c.conn.Close()
 
 	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, fullMessage)
 

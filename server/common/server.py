@@ -19,6 +19,7 @@ class Server:
         self.finished_agencies = manager.list()
         self.bets = manager.list()
         self.file_lock = manager.Lock()
+        self.bets_lock = manager.Lock()
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
@@ -42,7 +43,6 @@ class Server:
                 break
             process = multiprocessing.Process(target=self.__handle_client_connection, args=(client_sock,))
             process.start()
-            process.join()
 
     def __handle_client_connection(self, client_sock):
         """
@@ -51,56 +51,71 @@ class Server:
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
-        try:
-            full_message = self.__receive_full_message(client_sock)
+        while True:
+            try:
+                full_message = self.__receive_full_message(client_sock)
 
-            if not full_message:
-                return
+                if not full_message:
+                    return
 
-            messages = full_message.split('\n')
-            
-            if len(messages) == 2:
-                message = messages[0].split('|')
-                if message[1] == 'FINISHED':
-                    self.finished_agencies.append(message[0])
+                messages = full_message.split('\n')
+                
+                if len(messages) == 2:
+                    message = messages[0].split('|')
+                    if message[1] == 'FINISHED':
+                        self.finished_agencies.append(message[0])
 
-                    if len(self.finished_agencies) == AGENCIES:
-                        logging.info("action: sorteo | result: success")
-                        self.bets[:] = list(load_bets())
-                    
-                    self.__send_full_message(client_sock, "FINISHED RECEIVE\n".encode('utf-8'))
+                        if len(self.finished_agencies) == AGENCIES:
+                            logging.info("action: sorteo | result: success")
+                            # if not len(self.bets[:]):
+                            self.bets[:]= list(load_bets())
+                        
+                        self.__send_full_message(client_sock, "FINISHED RECEIVE\n".encode('utf-8'))
 
-                elif message[1] == 'REQUEST_WINNERS':
-                    if len(self.finished_agencies) < AGENCIES:
-                        self.__send_full_message(client_sock, "NOT_READY\n".encode('utf-8'))
-                    else:
+                    # elif message[1] == 'REQUEST_WINNERS':
+                    #     if len(self.finished_agencies) < AGENCIES:
+                    #         self.__send_full_message(client_sock, "NOT_READY\n".encode('utf-8'))
+                    #     else:
+                    #         winners_list = self.__get_acency_winners(message[0])
+                    #         winners = '|'.join(winners_list)
+                    #         self.__send_full_message(client_sock, f"WINNERS:{winners}\n".encode('utf-8'))
+
+                    elif message[1] == 'REQUEST_WINNERS':
+                        # Wait until the agencies are finished
+                        while len(self.finished_agencies) < AGENCIES:
+                            # Optionally send a "NOT_READY" message or just wait
+                            continue
+
+                        # Once finished, send the winners
+                        print("WINNER REQUESTED: ", message[0], len(self.finished_agencies), len(self.bets))
+                        self.bets[:]= list(load_bets())
                         winners_list = self.__get_acency_winners(message[0])
                         winners = '|'.join(winners_list)
                         self.__send_full_message(client_sock, f"WINNERS:{winners}\n".encode('utf-8'))
 
-            else:
-                success_count = 0
-                fail_count = 0
-
-                for message in messages:
-                    if len(message) != 0:
-                        if self.__process_message(message):
-                            success_count += 1
-                        else:
-                            fail_count += 1
-
-                if fail_count == 0:
-                    logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
-                    self.__send_full_message(client_sock, "BATCH_RECEIVED\n".encode('utf-8'))
                 else:
-                    logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
-                    logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
-                    self.__send_full_message(client_sock, "BATCH_FAILED\n".encode('utf-8'))
+                    success_count = 0
+                    fail_count = 0
 
-        except OSError as e:
-            logging.error("action: receive_message | result: fail | error: {e}")
-        finally:
-            client_sock.close()
+                    for message in messages:
+                        if len(message) != 0:
+                            if self.__process_message(message):
+                                success_count += 1
+                            else:
+                                fail_count += 1
+
+                    if fail_count == 0:
+                        logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
+                        self.__send_full_message(client_sock, "BATCH_RECEIVED\n".encode('utf-8'))
+                    else:
+                        logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
+                        logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
+                        self.__send_full_message(client_sock, "BATCH_FAILED\n".encode('utf-8'))
+            except OSError as e:
+                logging.error("action: receive_message | result: fail | error: {e}")
+            finally:
+                if not self._running:
+                    client_sock.close()
 
     def __accept_new_connection(self):
         """
@@ -169,7 +184,8 @@ class Server:
     
     def __get_acency_winners(self, agency_id):
         winners = []
-        for bet in self.bets:
-            if bet.agency == int(agency_id) and has_won(bet):
-                winners.append(bet.document)
+        with self.bets_lock:
+            for bet in self.bets:
+                if bet.agency == int(agency_id) and has_won(bet):
+                    winners.append(bet.document)
         return winners
