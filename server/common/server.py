@@ -32,7 +32,18 @@ class Server:
         self._server_socket.close()
 
         for process in self.processes:
-            process.join()
+            if process:
+                try:
+                    if process and process.is_alive():
+                        process.join()
+                        process.close()
+                        logging.info(f"action: process_terminated | process_id: {process.pid} | result: success")
+                    else:
+                        logging.warn(f"action: process_termination_skipped | process_id: {process.pid} | result: process not alive")
+                except Exception as e:
+                    logging.error(f"action: terminate_process | process_id: {process.pid} | result: fail | error: {e}")
+            else:
+                logging.warn(f"action: process_termination_skipped | process_id: {process.pid} | result: process not alive or invalid")
 
         logging.info("action: server_graceful_shutdown | result: success")
 
