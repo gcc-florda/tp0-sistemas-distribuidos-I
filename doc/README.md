@@ -88,7 +88,8 @@ Una vez que todas las agencias han terminado, el servidor notifica a los cliente
 
 ### Ejercicio N°8
 
-En lugar de cerrar la conexión por cada mensaje, se decidió manejar una única conexión por cliente para evitar bloqueos en las conexiones entrantes. Se utilizó la biblioteca `multiprocessing` de Python para crear un nuevo proceso por cada conexión entrante. Para la sincronización, se implementaron locks para la escritura y lectura del archivo `bets.csv`, y una barrera para que cada cliente espere hasta que todos hayan terminado. Esta solución se eligió debido a que Python no soporta la ejecución paralela de hilos debido al Global Interpreter Lock (GIL).
+En lugar de cerrar la conexión por cada mensaje, se decidió manejar una única conexión por cliente para evitar bloqueos en las conexiones entrantes. Se utilizó la biblioteca `multiprocessing` de Python para crear un nuevo proceso por cada conexión entrante. Esta solución se eligió debido a que Python no soporta la ejecución paralela de hilos debido al Global Interpreter Lock (GIL).
+Para la sincronización, se implementaron locks para la escritura y lectura del archivo `bets.csv`, y una barrera para que cada cliente espere hasta que todos hayan terminado.
 
 #### Protocolo de mensajes
 
