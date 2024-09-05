@@ -158,8 +158,9 @@ class Server:
             logging.error(f'action: process_message | result: fail | error: {e}')
             return False
         try:
-            with self.file_lock:
-                store_bets([bet])
+            self.file_lock.acquire()
+            store_bets([bet])
+            self.file_lock.release()
             logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
             return True
         except Exception as e:
@@ -168,8 +169,9 @@ class Server:
     
     def __get_acency_winners(self, agency_id):
         winners = []
-        with self.bets_lock:
-            for bet in self.bets:
-                if bet.agency == int(agency_id) and has_won(bet):
-                    winners.append(bet.document)
+        self.bets_lock.acquire()
+        for bet in self.bets:
+            if bet.agency == int(agency_id) and has_won(bet):
+                winners.append(bet.document)
+        self.bets_lock.release()
         return winners
