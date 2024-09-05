@@ -13,21 +13,27 @@ class Server:
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
-        self._running = True
         
         self.barrier = multiprocessing.Barrier(AGENCIES)
         manager = multiprocessing.Manager()
+        self._running = manager.Value('b', True)
         self.finished_agencies = manager.list()
         self.bets = manager.list()
         self.file_lock = manager.Lock()
         self.bets_lock = manager.Lock()
+        self.processes = []
 
         signal.signal(signal.SIGTERM, self._handle_sigterm)
 
     def _handle_sigterm(self, signum, frame):
         logging.info("action: server_graceful_shutdown | result: in_progress")
-        self._running = False
+        self._running.value = False
+
         self._server_socket.close()
+
+        for process in self.processes:
+            process.join()
+
         logging.info("action: server_graceful_shutdown | result: success")
 
     def run(self):
@@ -38,11 +44,12 @@ class Server:
         communication with a client. After client with communucation
         finishes, servers starts to accept new connections again
         """        
-        while self._running:
+        while self._running.value:
             client_sock = self.__accept_new_connection()
-            if not self._running:
+            if not self._running.value:
                 break
             process = multiprocessing.Process(target=self.__handle_client_connection, args=(client_sock,))
+            self.processes.append(process)
             process.start()
 
     def __handle_client_connection(self, client_sock):
@@ -53,11 +60,11 @@ class Server:
         client socket will also be closed
         """
         try:
-            while True:
+            while self._running.value:
                 full_message = self.__receive_full_message(client_sock)
 
-                if not full_message:
-                    return
+                if not full_message or not self._running.value:
+                    break
 
                 messages = full_message.split('\n')
                 
@@ -82,11 +89,16 @@ class Server:
                     fail_count = 0
 
                     for message in messages:
+                        if (not self._running.value):
+                            return
                         if len(message) != 0:
                             if self.__process_message(message):
                                 success_count += 1
                             else:
                                 fail_count += 1
+
+                    if not self._running.value:
+                        break
 
                     if fail_count == 0:
                         logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
