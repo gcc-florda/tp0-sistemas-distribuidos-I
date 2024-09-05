@@ -3,9 +3,7 @@ import logging
 import signal
 import struct
 import multiprocessing
-from common.utils import Bet, store_bets, load_bets, has_won
-
-AGENCIES = 5
+from common.utils import AGENCIES, FINISH_MESSAGE_HEADER, WINNERS_MESSAGE_HEADER, Bet, store_bets, load_bets, has_won
 
 class Server:
     def __init__(self, port, listen_backlog):
@@ -23,9 +21,13 @@ class Server:
         self.bets_lock = manager.Lock()
         self.processes = []
 
-        signal.signal(signal.SIGTERM, self._handle_sigterm)
+        signal.signal(signal.SIGTERM, self.__handle_sigterm)
 
-    def _handle_sigterm(self, signum, frame):
+    def __handle_sigterm(self, signum, frame):
+        """
+        Handle SIGTERM signal to gracefully shut down the server.
+        Closes the server socket and terminates all active processes.
+        """
         logging.info("action: server_graceful_shutdown | result: in_progress")
         self._running.value = False
 
@@ -79,49 +81,13 @@ class Server:
                 
                 if len(messages) == 2:
                     message = messages[0].split('|')
-                    if message[1] == 'FINISHED':
-                        if len(self.finished_agencies) == AGENCIES - 1:
-                            self.bets[:] = list(load_bets())
-                            logging.info("action: sorteo | result: success")
-                        self.finished_agencies.append(message[0])
-                        
-                        if self._running.value:
-                            try:
-                                self.barrier.wait()
-                            except Exception as e:
-                                logging.warn(f"action: barrier_wait | result: fail | error: server already shutdown")
-                        
-                        self.__send_full_message(client_sock, "FINISHED RECEIVE\n".encode('utf-8'))
-
-                    elif message[1] == 'REQUEST_WINNERS':
-                        winners_list = self.__get_acency_winners(message[0])
-                        winners = '|'.join(winners_list)
-                        self.__send_full_message(client_sock, f"WINNERS:{winners}\n".encode('utf-8'))
+                    if message[1] == FINISH_MESSAGE_HEADER:
+                        if not self.__process_finish_message(client_sock, message):
+                            break
+                    elif message[1] == WINNERS_MESSAGE_HEADER:
+                        self.__process_winners_message(client_sock, message)
                         break
-
-                else:
-                    success_count = 0
-                    fail_count = 0
-
-                    for message in messages:
-                        if (not self._running.value):
-                            return
-                        if len(message) != 0:
-                            if self.__process_message(message):
-                                success_count += 1
-                            else:
-                                fail_count += 1
-
-                    if not self._running.value:
-                        break
-
-                    if fail_count == 0:
-                        logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
-                        self.__send_full_message(client_sock, "BATCH_RECEIVED\n".encode('utf-8'))
-                    else:
-                        logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
-                        logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
-                        self.__send_full_message(client_sock, "BATCH_FAILED\n".encode('utf-8'))
+                elif not self.__process_bet_message(client_sock, messages): break
         except OSError as e:
             logging.error("action: receive_message | result: fail | error: {e}")
         finally:
@@ -147,6 +113,10 @@ class Server:
         return c
 
     def __receive_full_message(self, client_sock):
+        """
+        Receive a full message from the client socket.
+        The first 4 bytes of the message represent the length of the message.
+        """
         data_length = client_sock.recv(4)
         if not data_length:
             return None
@@ -160,6 +130,10 @@ class Server:
         return data.decode('utf-8')
     
     def __send_full_message(self, sock, message):
+        """
+        Send a full message to the client socket.
+        The first 4 bytes of the message represent the length of the message to be sent.
+        """
         try:
             length_message = len(message)
             buffer = struct.pack('!I', length_message) + message
@@ -167,7 +141,77 @@ class Server:
         except socket.error as e:
             logging.error(f"action: send_message | result: fail | error: {e}")
     
-    def __process_message(self, data):
+    def __get_acency_winners(self, agency_id):
+        """
+        Retrieve the list of winners DNIs for a specific agency.
+        """
+        winners = []
+        self.bets_lock.acquire()
+        for bet in self.bets:
+            if bet.agency == int(agency_id) and has_won(bet):
+                winners.append(bet.document)
+        self.bets_lock.release()
+        return winners
+    
+    def __process_finish_message(self, client_sock, message):
+        """
+        Process a 'FINISHED' message from an agency and then send a response.
+        """
+        if len(self.finished_agencies) == AGENCIES - 1:
+            self.bets[:] = list(load_bets())
+            logging.info("action: sorteo | result: success")
+        self.finished_agencies.append(message[0])
+        
+        if self._running.value:
+            try:
+                self.barrier.wait()
+            except Exception as e:
+                logging.warn(f"action: barrier_wait | result: fail | error: server already shutdown")
+                return False
+        
+        self.__send_full_message(client_sock, "FINISHED RECEIVE\n".encode('utf-8'))
+        return True
+    
+    def __process_winners_message(self, client_sock, message):
+        """
+        Process a 'REQUEST_WINNERS' message from an agency and then send a response.
+        """
+        winners_list = self.__get_acency_winners(message[0])
+        winners = '|'.join(winners_list)
+        self.__send_full_message(client_sock, f"WINNERS:{winners}\n".encode('utf-8'))
+
+    def __process_bet_message(self, client_sock, messages):
+        """
+        Process a batch of bet messages from an agency and then send a response.
+        """
+        success_count = 0
+        fail_count = 0
+
+        for message in messages:
+            if (not self._running.value):
+                return False
+            if len(message) != 0:
+                if self.__process_bet(message):
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+        if not self._running.value:
+            return False
+
+        if fail_count == 0:
+            logging.info(f'action: apuesta_recibida | result: success | cantidad: {success_count}')
+            self.__send_full_message(client_sock, "BATCH_RECEIVED\n".encode('utf-8'))
+        else:
+            logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
+            logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
+            self.__send_full_message(client_sock, "BATCH_FAILED\n".encode('utf-8'))
+        return True
+    
+    def __process_bet(self, data):
+        """
+        Process a single bet.
+        """
         bet_data = data.split('|')
         if len(bet_data) != 6:
             logging.error("action: process_message | result: fail | error: invalid_message_format")
@@ -193,12 +237,3 @@ class Server:
         except Exception as e:
             logging.error(f'action: store_bets | result: fail | error: {e}')
             return False
-    
-    def __get_acency_winners(self, agency_id):
-        winners = []
-        self.bets_lock.acquire()
-        for bet in self.bets:
-            if bet.agency == int(agency_id) and has_won(bet):
-                winners.append(bet.document)
-        self.bets_lock.release()
-        return winners

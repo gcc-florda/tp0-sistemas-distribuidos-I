@@ -7,6 +7,9 @@ import time
 STORAGE_FILEPATH = "./bets.csv"
 """ Simulated winner number in the lottery contest. """
 LOTTERY_WINNER_NUMBER = 7574
+AGENCIES = 5
+FINISH_MESSAGE_HEADER='FINISHED'
+WINNERS_MESSAGE_HEADER='REQUEST_WINNERS'
 
 
 """ A lottery bet registry. """
