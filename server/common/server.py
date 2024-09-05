@@ -32,18 +32,13 @@ class Server:
         self._server_socket.close()
 
         for process in self.processes:
-            if process:
+            if process.is_alive():
                 try:
-                    if process and process.is_alive():
-                        process.join()
-                        process.close()
-                        logging.info(f"action: process_terminated | process_id: {process.pid} | result: success")
-                    else:
-                        logging.warn(f"action: process_termination_skipped | process_id: {process.pid} | result: process not alive")
+                    process.terminate() # kill the process
+                    process.join() # wait it to end
+                    logging.info(f"action: process_terminated | process_id: {process.pid} | result: success")
                 except Exception as e:
-                    logging.error(f"action: terminate_process | process_id: {process.pid} | result: fail | error: {e}")
-            else:
-                logging.warn(f"action: process_termination_skipped | process_id: {process.pid} | result: process not alive or invalid")
+                    logging.warn(f"action: process_terminated | process_id: {process.pid} | result: fail | error: {e}")
 
         logging.info("action: server_graceful_shutdown | result: success")
 
@@ -62,6 +57,9 @@ class Server:
             process = multiprocessing.Process(target=self.__handle_client_connection, args=(client_sock,))
             self.processes.append(process)
             process.start()
+
+        for process in self.processes:
+            process.join()
 
     def __handle_client_connection(self, client_sock):
         """
@@ -86,7 +84,13 @@ class Server:
                             self.bets[:] = list(load_bets())
                             logging.info("action: sorteo | result: success")
                         self.finished_agencies.append(message[0])
-                        self.barrier.wait()
+                        
+                        if self._running.value:
+                            try:
+                                self.barrier.wait()
+                            except Exception as e:
+                                logging.warn(f"action: barrier_wait | result: fail | error: server already shutdown")
+                        
                         self.__send_full_message(client_sock, "FINISHED RECEIVE\n".encode('utf-8'))
 
                     elif message[1] == 'REQUEST_WINNERS':
