@@ -15,6 +15,7 @@ class Server:
         self._server_socket.listen(listen_backlog)
         self._running = True
         
+        self.barrier = multiprocessing.Barrier(AGENCIES)
         manager = multiprocessing.Manager()
         self.finished_agencies = manager.list()
         self.bets = manager.list()
@@ -51,8 +52,8 @@ class Server:
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
-        while True:
-            try:
+        try:
+            while True:
                 full_message = self.__receive_full_message(client_sock)
 
                 if not full_message:
@@ -63,35 +64,18 @@ class Server:
                 if len(messages) == 2:
                     message = messages[0].split('|')
                     if message[1] == 'FINISHED':
-                        self.finished_agencies.append(message[0])
-
-                        if len(self.finished_agencies) == AGENCIES:
+                        if len(self.finished_agencies) == AGENCIES - 1:
+                            self.bets[:] = list(load_bets())
                             logging.info("action: sorteo | result: success")
-                            # if not len(self.bets[:]):
-                            self.bets[:]= list(load_bets())
-                        
+                        self.finished_agencies.append(message[0])
+                        self.barrier.wait()
                         self.__send_full_message(client_sock, "FINISHED RECEIVE\n".encode('utf-8'))
 
-                    # elif message[1] == 'REQUEST_WINNERS':
-                    #     if len(self.finished_agencies) < AGENCIES:
-                    #         self.__send_full_message(client_sock, "NOT_READY\n".encode('utf-8'))
-                    #     else:
-                    #         winners_list = self.__get_acency_winners(message[0])
-                    #         winners = '|'.join(winners_list)
-                    #         self.__send_full_message(client_sock, f"WINNERS:{winners}\n".encode('utf-8'))
-
                     elif message[1] == 'REQUEST_WINNERS':
-                        # Wait until the agencies are finished
-                        while len(self.finished_agencies) < AGENCIES:
-                            # Optionally send a "NOT_READY" message or just wait
-                            continue
-
-                        # Once finished, send the winners
-                        print("WINNER REQUESTED: ", message[0], len(self.finished_agencies), len(self.bets))
-                        self.bets[:]= list(load_bets())
                         winners_list = self.__get_acency_winners(message[0])
                         winners = '|'.join(winners_list)
                         self.__send_full_message(client_sock, f"WINNERS:{winners}\n".encode('utf-8'))
+                        break
 
                 else:
                     success_count = 0
@@ -111,11 +95,11 @@ class Server:
                         logging.error(f'action: apuesta_recibida | result: fail | cantidad: {success_count}')
                         logging.warn(f'action: apuesta_rechazada | result: fail | cantidad: {fail_count}')
                         self.__send_full_message(client_sock, "BATCH_FAILED\n".encode('utf-8'))
-            except OSError as e:
-                logging.error("action: receive_message | result: fail | error: {e}")
-            finally:
-                if not self._running:
-                    client_sock.close()
+        except OSError as e:
+            logging.error("action: receive_message | result: fail | error: {e}")
+        finally:
+            client_sock.close()
+            logging.info("action: client_connection | result: closed")
 
     def __accept_new_connection(self):
         """
