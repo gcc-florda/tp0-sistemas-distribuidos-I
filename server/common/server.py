@@ -78,11 +78,17 @@ class Server:
         return c
 
     def __receive_full_message(self, client_sock):
-        data_length = client_sock.recv(4)
-        if not data_length:
-            return None
+        data_length = b''
+
+        while len(data_length) < 4:
+            packet = client_sock.recv(4 - len(data_length))
+            if not packet:
+                return None
+            data_length += packet
+        
         message_length = struct.unpack('!I', data_length)[0]
         data = b''
+
         while len(data) < message_length:
             packet = client_sock.recv(message_length - len(data))
             if not packet:

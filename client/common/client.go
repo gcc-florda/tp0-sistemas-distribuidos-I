@@ -134,7 +134,8 @@ func (c *Client) sendMessage(message string) (string, error) {
 		return "", err
 	}
 
-	_, err = c.conn.Write(buffer.Bytes())
+	err = sendFullMessage(c.conn, *buffer)
+
 	if err != nil {
 		log.Errorf("action: send_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
@@ -165,4 +166,20 @@ func (c *Client) sendMessage(message string) (string, error) {
 	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, fullMessage)
 
 	return fullMessage, nil
+}
+
+func sendFullMessage(conn net.Conn, buffer bytes.Buffer) error {
+	fullMessageLength := buffer.Len()
+
+	bytesSent := 0
+
+	for bytesSent < fullMessageLength {
+		n, err := conn.Write(buffer.Bytes())
+		if err != nil {
+			return err
+		}
+		bytesSent += n
+	}
+
+	return nil
 }
