@@ -66,43 +66,46 @@ func (c *Client) createClientSocket() error {
 	return nil
 }
 
-func (c *Client) ReadBetsFromFile() ([]string, error) {
+func (c *Client) OpenBetsFromFile() (*os.File, error) {
 	file, err := os.Open(c.config.DataFilePath)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-
-	var bets []string
-	reader := csv.NewReader(file)
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, record := range records {
-		if len(record) < 5 {
-			continue
-		}
-		bets = append(bets, fmt.Sprintf("%v|%v|%v|%v|%v|%v\n",
-			c.config.ID,
-			record[0],
-			record[1],
-			record[2],
-			record[3],
-			record[4],
-		))
-	}
-	return bets, nil
+	return file, nil
 }
 
-func (c *Client) SendBatches(bets []string) error {
+func (c *Client) SendBatches() error {
+
+	file, err := c.OpenBetsFromFile()
+
+	if err != nil {
+		return err
+	}
+
 	const maxBatchSize = 8 * 1024
 	batchSize := c.config.BatchMaxAmount
 	var currentBatch []string
 	var currentBatchSize int
 
-	for _, bet := range bets {
+	reader := csv.NewReader(file)
+
+	for {
+		record, err := reader.Read()
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if len(record) != 5 {
+			continue
+		}
+
+		bet := c.parseBet(record)
+
 		betSize := len(bet)
 
 		if currentBatchSize+betSize > maxBatchSize || len(currentBatch) >= batchSize {
@@ -124,6 +127,7 @@ func (c *Client) SendBatches(bets []string) error {
 		}
 	}
 
+	file.Close()
 	return nil
 }
 
@@ -174,13 +178,7 @@ func (c *Client) RequestWinners() error {
 func (c *Client) StartClientLoop() {
 	go c.handleGracefulShutdown()
 
-	bets, err := c.ReadBetsFromFile()
-	if err != nil {
-		c.closeConnection("read_bets", err)
-		return
-	}
-
-	err = c.SendBatches(bets)
+	err := c.SendBatches()
 	if err != nil {
 		c.closeConnection("send_batches", err)
 		return
@@ -213,8 +211,7 @@ func (c *Client) handleGracefulShutdown() {
 
 func (c *Client) closeConnection(action string, err error) {
 	log.Errorf("action: %s | result: fail | client_id: %v | error: %v", action, c.config.ID, err)
-	if err.Error() != "client already shutdown" {
-		log.Infof("action: client_shutdown | result: success | client_id: %v", c.config.ID)
+	if err.Error() != "client already shutdown" && c.conn != nil {
 		c.conn.Close()
 	}
 }
@@ -263,7 +260,8 @@ func (c *Client) sendMessage(message string) (string, error) {
 		return "", err
 	}
 
-	_, err = c.conn.Write(buffer.Bytes())
+	err = c.sendFullMessage(*buffer)
+
 	if err != nil {
 		log.Errorf("action: send_message | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return "", err
@@ -294,4 +292,31 @@ func (c *Client) sendMessage(message string) (string, error) {
 	log.Infof("action: receive_message | result: success | client_id: %v | msg: %v", c.config.ID, fullMessage)
 
 	return fullMessage, nil
+}
+
+func (c *Client) sendFullMessage(buffer bytes.Buffer) error {
+	fullMessageLength := buffer.Len()
+
+	bytesSent := 0
+
+	for bytesSent < fullMessageLength {
+		n, err := c.conn.Write(buffer.Bytes())
+		if err != nil {
+			return err
+		}
+		bytesSent += n
+	}
+
+	return nil
+}
+
+func (c *Client) parseBet(record []string) string {
+	return fmt.Sprintf("%v|%v|%v|%v|%v|%v\n",
+		c.config.ID,
+		record[0],
+		record[1],
+		record[2],
+		record[3],
+		record[4],
+	)
 }
