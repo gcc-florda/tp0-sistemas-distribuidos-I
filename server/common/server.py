@@ -16,9 +16,8 @@ class Server:
         manager = multiprocessing.Manager()
         self._running = manager.Value('b', True)
         self.finished_agencies = manager.list()
-        self.bets = manager.list()
+        self.winner_bets = manager.list()
         self.file_lock = manager.Lock()
-        self.bets_lock = manager.Lock()
         self.processes = []
 
         signal.signal(signal.SIGTERM, self.__handle_sigterm)
@@ -113,15 +112,17 @@ class Server:
         return c
 
     def __receive_full_message(self, client_sock):
-        """
-        Receive a full message from the client socket.
-        The first 4 bytes of the message represent the length of the message.
-        """
-        data_length = client_sock.recv(4)
-        if not data_length:
-            return None
+        data_length = b''
+
+        while len(data_length) < 4:
+            packet = client_sock.recv(4 - len(data_length))
+            if not packet:
+                return None
+            data_length += packet
+        
         message_length = struct.unpack('!I', data_length)[0]
         data = b''
+
         while len(data) < message_length:
             packet = client_sock.recv(message_length - len(data))
             if not packet:
@@ -146,11 +147,9 @@ class Server:
         Retrieve the list of winners DNIs for a specific agency.
         """
         winners = []
-        self.bets_lock.acquire()
-        for bet in self.bets:
-            if bet.agency == int(agency_id) and has_won(bet):
+        for bet in self.winner_bets:
+            if bet.agency == int(agency_id):
                 winners.append(bet.document)
-        self.bets_lock.release()
         return winners
     
     def __process_finish_message(self, client_sock, message):
@@ -158,7 +157,7 @@ class Server:
         Process a 'FINISHED' message from an agency and then send a response.
         """
         if len(self.finished_agencies) == AGENCIES - 1:
-            self.bets[:] = list(load_bets())
+            self.__load_winners()
             logging.info("action: sorteo | result: success")
         self.finished_agencies.append(message[0])
         
@@ -237,3 +236,12 @@ class Server:
         except Exception as e:
             logging.error(f'action: store_bets | result: fail | error: {e}')
             return False
+        
+    def __load_winners(self):
+        try:
+            for bet in load_bets():
+                if has_won(bet):
+                    self.winner_bets.append(bet)
+            logging.info(f'action: load_winners | result: success | amount: {len(self.winner_bets)}')
+        except Exception as e:
+            logging.error(f'action: load_winners | result: fail | error: {e}')
